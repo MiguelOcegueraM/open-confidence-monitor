@@ -1,46 +1,34 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
+import useMonitorSocket from '../useMonitorSocket.js';
+import useRemainingSeconds, { formatSeconds } from '../useRemainingSeconds.js';
 
-const WS_URL = 'ws://localhost:3000';
+const TOKEN_KEY = 'controlToken';
+
+const readInitialToken = () => {
+  const fromUrl = new URLSearchParams(window.location.search).get('token');
+  try {
+    if (fromUrl) localStorage.setItem(TOKEN_KEY, fromUrl);
+    return fromUrl || localStorage.getItem(TOKEN_KEY) || '';
+  } catch {
+    return fromUrl || '';
+  }
+};
 
 const Control = () => {
-  const wsRef = useRef(null);
-  const [connected, setConnected] = useState(false);
-  const [state, setState] = useState({ timer: { running: false, time: 0, duration: 0 }, notes: '' });
+  const [token, setToken] = useState(readInitialToken);
+  const [tokenInput, setTokenInput] = useState('');
+  const { connected, authorized, state, clockOffset, send } = useMonitorSocket({ token });
+  const remaining = useRemainingSeconds(state.timer, clockOffset);
   const [minutesInput, setMinutesInput] = useState('');
+  const [notesDraft, setNotesDraft] = useState(null);
 
   useEffect(() => {
-    const socket = new WebSocket(WS_URL);
-    wsRef.current = socket;
+    setMinutesInput(prev => (prev === '' ? Math.floor(state.timer.duration / 60000) || '' : prev));
+  }, [state.timer.duration]);
 
-    socket.addEventListener('open', () => setConnected(true));
-    socket.addEventListener('close', () => setConnected(false));
-    socket.addEventListener('message', event => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'state') {
-          setState(data.value);
-          setMinutesInput(prev => (prev === '' ? Math.floor(data.value.timer.duration / 60) || '' : prev));
-        }
-      } catch (err) {
-        console.error('Failed to parse message', err);
-      }
-    });
-
-    return () => socket.close();
-  }, []);
-
-  const send = payload => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(payload));
-    }
-  };
-
-  const formattedTime = useMemo(() => {
-    const total = state.timer.time || 0;
-    const minutes = Math.floor(total / 60).toString().padStart(2, '0');
-    const seconds = Math.floor(total % 60).toString().padStart(2, '0');
-    return `${minutes}:${seconds}`;
-  }, [state.timer.time]);
+  // Notes are edited locally and only pushed on send, so the speaker never sees half-typed text.
+  const draft = notesDraft ?? state.notes;
+  const hasUnsentNotes = notesDraft !== null && notesDraft !== state.notes;
 
   const handleSetTimer = () => {
     const minutes = Number(minutesInput);
@@ -49,19 +37,68 @@ const Control = () => {
     }
   };
 
+  const handleSendNotes = () => {
+    send({ type: 'updateNotes', value: draft });
+    setNotesDraft(null);
+  };
+
+  const handleNotesKeyDown = e => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      handleSendNotes();
+    }
+  };
+
+  const handleTokenSubmit = e => {
+    e.preventDefault();
+    const value = tokenInput.trim();
+    try {
+      localStorage.setItem(TOKEN_KEY, value);
+    } catch {
+      // Storage can be unavailable (private mode); the token still works for this session.
+    }
+    setToken(value);
+    setTokenInput('');
+  };
+
+  if (connected && authorized === false) {
+    return (
+      <div className="screen control-screen">
+        <header className="control-header">
+          <h1>JSConfMX Confidence Monitor</h1>
+        </header>
+        <form className="controls" onSubmit={handleTokenSubmit}>
+          <label>
+            Control token
+            <input
+              type="password"
+              autoFocus
+              value={tokenInput}
+              placeholder="Printed in the server console"
+              onChange={e => setTokenInput(e.target.value)}
+            />
+          </label>
+          <div className="buttons">
+            <button type="submit">Unlock</button>
+          </div>
+        </form>
+      </div>
+    );
+  }
+
   return (
     <div className="screen control-screen">
       <header className="control-header">
         <h1>JSConfMX Confidence Monitor</h1>
         <span className={`status ${connected ? 'online' : 'offline'}`}>
-          {connected ? '🟢 Connected' : '🔴 Disconnected'}
+          {connected ? '🟢 Connected' : '🔴 Reconnecting…'}
         </span>
       </header>
 
       <section className="timer-section">
-        <div className="timer-display">{formattedTime}</div>
+        <div className="timer-display">{formatSeconds(remaining)}</div>
         <div className="duration">
-          Duration: {Math.floor(state.timer.duration / 60) || 0} min
+          Duration: {Math.floor(state.timer.duration / 60000) || 0} min
         </div>
 
         <div className="controls">
@@ -87,10 +124,21 @@ const Control = () => {
         <label htmlFor="notes">Notes</label>
         <textarea
           id="notes"
-          value={state.notes}
+          value={draft}
           placeholder="Type speaker notes here…"
-          onChange={e => send({ type: 'updateNotes', value: e.target.value })}
+          onChange={e => setNotesDraft(e.target.value)}
+          onKeyDown={handleNotesKeyDown}
         />
+        <div className="notes-actions">
+          <span className="notes-hint">
+            {hasUnsentNotes ? 'Unsent changes · ⌘/Ctrl + Enter to send' : 'Speaker is seeing these notes'}
+          </span>
+          <div className="buttons">
+            <button onClick={handleSendNotes} disabled={!hasUnsentNotes}>
+              Send to display
+            </button>
+          </div>
+        </div>
       </section>
     </div>
   );

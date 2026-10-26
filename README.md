@@ -31,8 +31,11 @@ Built with simplicity and accessibility in mind, this project helps **tech commu
 
 ## ⚙️ What the Application Does
 
-- From `/control`, you can set the timer duration, start, pause, reset, and write live notes.  
+- From `/control`, you can set the timer duration, start, pause, reset, and write notes. Notes are sent to the speaker with **Send to display** (or ⌘/Ctrl + Enter), never mid-typing.  
 - A global state is kept on the backend and automatically synced with all connected clients.  
+- The timer keeps counting into negative time (`-01:23`) when the speaker runs over.  
+- Clients compute the countdown locally from the server's end time, so the display stays smooth and keeps running through short network drops, and reconnects automatically.  
+- Only clients with the control token can change the timer or notes.  
 - The `/display` view is designed for **OBS** or **projectors**, showing a full-screen timer and live notes for the speaker.  
 - Includes visual feedback:
   - A **⏸️ “Paused”** banner when the timer stops.
@@ -77,8 +80,25 @@ npm run dev
 
 ### 5️⃣ Open in your browser
 
-- [http://localhost:5173/control](http://localhost:5173/control) → control panel  
-- [http://localhost:5173/display](http://localhost:5173/display) → speaker display (for OBS)
+When the server starts it prints the control token and ready-to-use URLs, including your LAN IP:
+
+```
+Control token: 3f9a1c2e
+  Control: http://192.168.1.42:5173/control?token=3f9a1c2e
+  Display: http://192.168.1.42:5173/display
+```
+
+- `/control?token=…` → control panel (the token is remembered in that browser)
+- `/display` → speaker display (for OBS, or any laptop/tablet on the same network)
+
+The token is random on every run. Set `CONTROL_TOKEN` to keep a fixed one:
+
+```bash
+CONTROL_TOKEN=my-secret npm run dev
+```
+
+If the WebSocket server is not on the same host as the page on port 3000, set `VITE_WS_URL`
+(e.g. `VITE_WS_URL=ws://10.0.0.5:3000`) or `VITE_WS_PORT` when running the client.
 
 ---
 
@@ -88,7 +108,7 @@ To project the speaker screen using **OBS (Open Broadcaster Software):**
 
 1. Open OBS and create a new scene, e.g. `Speaker Monitor`.
 2. Add a **Browser Source**:
-   - **URL:** `http://localhost:5173/display`
+   - **URL:** `http://localhost:5173/display` (no token needed)
    - **Width:** 1920 (or your screen resolution)
    - **Height:** 1080
 3. Right-click on the preview → **Fullscreen Projector (Display 2)** to send it to the stage monitor or projector.
